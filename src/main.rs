@@ -11,6 +11,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let n_start = (&args[2]).trim().parse::<i32>()?;
     let n_end = (&args[3]).trim().parse::<i32>()?;
     let input_filename = &args[4];
+    let output_filename = &args[5];
     
     let mut f = BufReader::new(File::open(input_filename)?);
     let mut data = String::new();
@@ -41,8 +42,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let data: Vec<(f64, f64)> = data.map(|(freq, power)| (freq, power - background)).collect();
+    // let data: Vec<(f64, f64)> = data.map(|(freq, _)| (freq, (-(freq - 0.3)*(freq - 0.3) / 1.0 / 1.0).exp())).collect();
 
-    let mut out = BufWriter::new(File::create("output.dat")?);
+    let mut out = BufWriter::new(File::create(output_filename)?);
+
+    let max = timestep * n_end.abs().max(n_start.abs()) as f64;
+    let max = max.log10().floor() as usize + 1 + timestep.log10().floor().abs() as usize + 2;
 
     // const PI: f64 = std::f64::consts::PI;
     for i_t in n_start..n_end {
@@ -61,7 +66,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     
         writeln!(out,
-            "{:.*} {:+.20} {:+.20} {:+.20}",
+            "{:>+0max$.*} {:+.20} {:+.20} {:+.20}",
             timestep.log10().floor().abs() as usize,
             time,
             integral.abs(),
