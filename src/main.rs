@@ -1,30 +1,74 @@
 use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::{BufReader, BufWriter, Read, Write};
+use std::env;
 
-mod fft;
 mod complex;
+use complex::Complex;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut f = BufReader::new(File::open("spectrum.dat")?);
+    let args: Vec<String> = env::args().collect();
+    let timestep = (&args[1]).trim().parse::<f64>()?;
+    let n_start = (&args[2]).trim().parse::<i32>()?;
+    let n_end = (&args[3]).trim().parse::<i32>()?;
+    let input_filename = &args[4];
+    
+    let mut f = BufReader::new(File::open(input_filename)?);
     let mut data = String::new();
     f.read_to_string(&mut data)?;
     
-    let (_wavelength, power): (Vec<f64>, Vec<f64>) = data.split('\n').flat_map(|line| {
-        line.split(',').map(|strip| strip.trim().parse::<f64>()).take(2).collect::<Result<Vec<f64>, _>>().map_or(
-            None,
-            |vec| {
-                if vec.len() < 2 {
+    const SPEED_OF_LIGHT: f64 = 3.0e8; // in m/s
+    let convert_wavelength_to_frequency = |wavelength: &f64| -> f64 {
+        SPEED_OF_LIGHT / (wavelength * 1.0e-9) / 1.0e15
+    };
+
+    let data = data.split('\n').flat_map(|line| {
+        if line.starts_with("#") {
+            None
+        } else {
+            line.split_whitespace().take_while(|strip| !strip.starts_with("#")).map(|strip| strip.trim().parse::<f64>()).collect::<Result<Vec<f64>, _>>().ok().and_then(|vec| {
+                if vec.len() < 4 + 1 {
                     None
                 } else {
-                    Some((vec[0], vec[1]))
+                    Some((convert_wavelength_to_frequency(&vec[1]), vec[4]))
                 }
-            }
-        )
-    }).unzip();
+            })
+        }
+    });
 
-    let fpower = fft::fft(&power);
+    let background = {
+        let (a, b) = data.clone().filter(|(wl, _)| wl < &900_f64).fold((0.0, 0), |(sum, count), (_, power)| (sum + power, count + 1));
+        a / b as f64
+    };
 
-    println!("{:?}", fpower);
+    let data: Vec<(f64, f64)> = data.map(|(freq, power)| (freq, power - background)).collect();
+
+    let mut out = BufWriter::new(File::create("output.dat")?);
+
+    // const PI: f64 = std::f64::consts::PI;
+    for i_t in n_start..n_end {
+        let time = timestep * i_t as f64;
+
+        let (integral, _) = data.iter().fold(
+            (Complex::ZERO, (data[0].0, data[0].1)),
+            |(result, (prev_freq, prev_power)), (freq, power)| {
+            (
+                result + (prev_freq - freq) * (Complex::new_polar(prev_power, prev_freq * time) + Complex::new_polar(*power, freq * time)) / 2.0,
+                (
+                    *freq,
+                    *power
+                )
+            )
+        });
+    
+        writeln!(out,
+            "{:.*} {:+.20} {:+.20} {:+.20}",
+            timestep.log10().floor().abs() as usize,
+            time,
+            integral.abs(),
+            integral.re(),
+            integral.im(),
+        )?;
+    }
 
     Ok(())
 }
